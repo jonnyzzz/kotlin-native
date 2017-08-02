@@ -113,6 +113,8 @@ internal class FunctionGenerationContext(val function: LLVMValueRef,
     private var slotCount = 0
     private var localAllocs = 0
     private var arenaSlot: LLVMValueRef? = null
+    private val frameOverlaySlotCount =
+            (LLVMStoreSizeOfType(llvmTargetData, runtime.frameOverlayType) / pointerSize).toInt()
 
     private val prologueBb        = basicBlockInFunction("prologue", startLocation)
     private val localsInitBb      = basicBlockInFunction("locals_init", startLocation)
@@ -211,10 +213,8 @@ internal class FunctionGenerationContext(val function: LLVMValueRef,
         call(context.llvm.updateReturnRefFunction, listOf(address, value))
     }
 
-    // Only use ignoreOld, when sure that memory is freshly inited and have no value.
-    private fun updateRef(value: LLVMValueRef, address: LLVMValueRef, ignoreOld: Boolean = false) {
-        call(if (ignoreOld) context.llvm.setRefFunction else context.llvm.updateRefFunction,
-                listOf(address, value))
+    private fun updateRef(value: LLVMValueRef, address: LLVMValueRef) {
+        call(context.llvm.updateRefFunction, listOf(address, value))
     }
 
     //-------------------------------------------------------------------------//
@@ -404,8 +404,8 @@ internal class FunctionGenerationContext(val function: LLVMValueRef,
         }
         positionAtEnd(localsInitBb)
         slotsPhi = phi(kObjHeaderPtrPtr)
-        // First slot can be assigned to keep pointer to frame local arena.
-        slotCount = 1
+        // First slot(s) can be assigned to keep frame overlay data.
+        slotCount = frameOverlaySlotCount
         localAllocs = 0
         // Is removed by DCE trivially, if not needed.
         arenaSlot = intToPtr(
@@ -428,6 +428,7 @@ internal class FunctionGenerationContext(val function: LLVMValueRef,
                         listOf(slotsMem, Int8(0).llvm,
                                 Int32(slotCount * pointerSize).llvm, Int32(alignment).llvm,
                                 Int1(0).llvm))
+                call(context.llvm.enterFrameFunction, listOf(slots, Int32(slotCount).llvm))
             }
             addPhiIncoming(slotsPhi!!, prologueBb to slots)
             br(localsInitBb)
@@ -569,7 +570,7 @@ internal class FunctionGenerationContext(val function: LLVMValueRef,
 
     private val needSlots: Boolean
         get() {
-            return slotCount > 1 || localAllocs > 0 ||
+            return slotCount > frameOverlaySlotCount || localAllocs > 0 ||
                     // Prevent empty cleanup on mingw to workaround LLVM bug:
                     context.config.targetManager.target == KonanTarget.MINGW
         }

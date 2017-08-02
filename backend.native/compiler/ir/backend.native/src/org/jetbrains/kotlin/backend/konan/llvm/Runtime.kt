@@ -39,6 +39,8 @@ class Runtime(bitcodeFile: String) {
     val objHeaderType = getStructType("ObjHeader")
     val arrayHeaderType = getStructType("ArrayHeader")
 
+    val frameOverlayType = getStructType("FrameOverlay")
+
     val target = LLVMGetTarget(llvmModule)!!.toKString()
 
     // TODO: deduce TLS model from explicit config parameter.
